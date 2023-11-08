@@ -1,0 +1,6 @@
+[workspace]
+members = ["working-title-main", "working-title-player", "working-title-core", "working-title-menu"]
+resolver = "2"
+
+[profile.dev.package."*"]
+opt-level = 3

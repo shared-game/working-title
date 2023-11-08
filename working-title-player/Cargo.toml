@@ -1,0 +1,10 @@
+[package]
+name = "working-title-player"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+working-title-core = { path = "../working-title-core" }
+
+bevy = "0.12"
+bevy_rapier3d = "0.23"
