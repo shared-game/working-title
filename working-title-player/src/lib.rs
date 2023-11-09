@@ -83,12 +83,19 @@ pub struct PlayerController {
 }
 
 pub fn handle_movement(
-    mut query: Query<(&mut PlayerController, &Velocity, &mut ExternalImpulse)>,
+    mut query: Query<(
+        Entity,
+        &mut PlayerController,
+        &GlobalTransform,
+        &Velocity,
+        &mut ExternalImpulse,
+    )>,
     camera_query: Query<&Transform, With<PlayerCam>>,
     input: Res<Input<KeyCode>>,
     ctx: Res<RapierContext>,
+    mut collisions: Local<Vec<(Entity, Toi)>>,
 ) {
-    query.for_each_mut(|(mut controller, velocity, mut impulse)| {
+    query.for_each_mut(|(entity, mut controller, global, velocity, mut impulse)| {
         let mut movement_direction = Vec3::ZERO;
 
         let (forward, right) = if let Ok(transform) = camera_query.get_single() {
@@ -139,12 +146,88 @@ pub fn handle_movement(
 
         impulse.impulse += needed_accel;
 
-        if input.just_pressed(KeyCode::Space) {
-            impulse.impulse += Vec3::Y * 50.0;
+        let ground_cast = {
+            intersections(
+                &ctx,
+                ShapeDesc {
+                    shape_pos: global.transform_point(Vec3::ZERO),
+                    shape_rot: global.to_scale_rotation_translation().1,
+                    shape_vel: -Vec3::Y,
+                    shape: &Collider::ball(0.45),
+                },
+                1.0,
+                QueryFilter::new()
+                    .exclude_sensors()
+                    .predicate(&|collider| collider != entity),
+                &mut collisions,
+            );
+
+            collisions.iter().find(|(_, i)| {
+                i.status != TOIStatus::Penetrating
+                    && i.details
+                        .map(|det| {
+                            det.normal1.angle_between(Vec3::Y)
+                                <= (45.0 * (std::f32::consts::PI / 180.0))
+                        })
+                        .unwrap_or(true)
+            })
+        };
+
+        let float_offset = ground_cast.map(|(_, toi)| toi.toi - 0.55);
+
+        let grounded = float_offset
+            .map(|offset| (-0.3..=0.05).contains(&offset))
+            .unwrap_or(false);
+
+        if grounded && input.just_pressed(KeyCode::Space) {
+            impulse.impulse += Vec3::Y * 100.0;
         }
 
         controller.last_target_velocity = target_velocity;
     })
+}
+
+struct ShapeDesc<'a> {
+    shape_pos: Vec3,
+    shape_rot: Quat,
+    shape_vel: Vec3,
+    shape: &'a Collider,
+}
+
+fn intersections(
+    ctx: &RapierContext,
+    shape: ShapeDesc,
+    max_toi: f32,
+    filter: QueryFilter,
+    collisions: &mut Vec<(Entity, Toi)>,
+) {
+    collisions.clear();
+
+    let predicate = filter.predicate;
+
+    loop {
+        let predicate = |entity| {
+            !collisions.iter().any(|&(e, _)| e == entity)
+                && predicate.map(|pred| pred(entity)).unwrap_or(true)
+        };
+
+        let filter = filter.predicate(&predicate);
+
+        let ShapeDesc {
+            shape_pos,
+            shape_rot,
+            shape_vel,
+            shape,
+        } = shape;
+
+        if let Some(collision) = ctx.cast_shape(
+            shape_pos, shape_rot, shape_vel, shape, max_toi, true, filter,
+        ) {
+            collisions.push(collision);
+        } else {
+            break;
+        }
+    }
 }
 
 #[derive(Component, Default)]
