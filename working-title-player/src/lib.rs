@@ -11,9 +11,11 @@ impl Plugin for PlayerPlugin {
         app.add_systems(Startup, setup_player)
             .add_systems(
                 Update,
-                (handle_movement, handle_mouse, handle_other_input)
+                (handle_movement_input, handle_mouse, handle_other_input)
                     .run_if(in_state(GameState::FirstPerson)),
             )
+            .add_systems(PreUpdate, reset_movement_input)
+            .add_systems(PostUpdate, handle_movement_physics)
             .add_systems(OnEnter(GameState::FirstPerson), grab_cursor)
             .add_systems(OnExit(GameState::FirstPerson), release_cursor);
     }
@@ -78,26 +80,25 @@ pub fn setup_player(mut commands: Commands) {
 
 #[derive(Component, Default)]
 pub struct PlayerController {
+    movement_direction: Vec3,
+    jumping: bool,
     last_target_velocity: Vec3,
     camera_rotation: Quat,
 }
 
-pub fn handle_movement(
-    mut query: Query<(
-        Entity,
-        &mut PlayerController,
-        &GlobalTransform,
-        &Velocity,
-        &mut ExternalImpulse,
-    )>,
+pub fn reset_movement_input(mut query: Query<&mut PlayerController>) {
+    query.for_each_mut(|mut controller| {
+        controller.movement_direction = Vec3::ZERO;
+        controller.jumping = false;
+    });
+}
+
+pub fn handle_movement_input(
+    mut query: Query<&mut PlayerController>,
     camera_query: Query<&Transform, With<PlayerCam>>,
     input: Res<Input<KeyCode>>,
-    ctx: Res<RapierContext>,
-    mut collisions: Local<Vec<(Entity, Toi)>>,
 ) {
-    query.for_each_mut(|(entity, mut controller, global, velocity, mut impulse)| {
-        let mut movement_direction = Vec3::ZERO;
-
+    query.for_each_mut(|mut controller| {
         let (forward, right) = if let Ok(transform) = camera_query.get_single() {
             let local_z = -transform.local_z();
             let forward = Vec3::new(local_z.x, 0.0, local_z.z).normalize();
@@ -108,31 +109,45 @@ pub fn handle_movement(
         };
 
         if input.pressed(KeyCode::W) {
-            movement_direction += forward;
+            controller.movement_direction += forward;
         }
 
         if input.pressed(KeyCode::S) {
-            movement_direction -= forward;
+            controller.movement_direction -= forward;
         }
 
         if input.pressed(KeyCode::D) {
-            movement_direction += right;
+            controller.movement_direction += right;
         }
 
         if input.pressed(KeyCode::A) {
-            movement_direction -= right;
+            controller.movement_direction -= right;
         }
 
-        let max_speed = if input.pressed(KeyCode::ShiftLeft) {
-            10.0
-        } else {
-            5.0
-        };
+        if input.just_pressed(KeyCode::Space) {
+            controller.jumping = true;
+        }
+    })
+}
+
+fn handle_movement_physics(
+    mut query: Query<(
+        Entity,
+        &mut PlayerController,
+        &GlobalTransform,
+        &Velocity,
+        &mut ExternalImpulse,
+    )>,
+    ctx: Res<RapierContext>,
+    mut collisions: Local<Vec<(Entity, Toi)>>,
+) {
+    query.for_each_mut(|(entity, mut controller, global, velocity, mut impulse)| {
+        let max_speed = 5.0;
 
         let accel = 50.0;
         let max_accel_force = 10.0;
 
-        let target_velocity = max_speed * movement_direction;
+        let target_velocity = max_speed * controller.movement_direction;
 
         let target_velocity = Vec3::lerp(
             controller.last_target_velocity,
@@ -179,12 +194,12 @@ pub fn handle_movement(
             .map(|offset| (-0.3..=0.05).contains(&offset))
             .unwrap_or(false);
 
-        if grounded && input.just_pressed(KeyCode::Space) {
+        if grounded && controller.jumping {
             impulse.impulse += Vec3::Y * 100.0;
         }
 
         controller.last_target_velocity = target_velocity;
-    })
+    });
 }
 
 struct ShapeDesc<'a> {
