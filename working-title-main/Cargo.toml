@@ -8,5 +8,5 @@ working-title-core = { path = "../working-title-core" }
 working-title-menu = { path = "../working-title-menu" }
 working-title-player = { path = "../working-title-player" }
 
-bevy = "0.12"
+bevy = { version = "0.12", features = ["bmp"] }
 bevy_rapier3d = "0.23"
